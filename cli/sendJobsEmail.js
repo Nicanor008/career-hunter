@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import { config } from "./config.js";
-import { searchParams, stacks } from "./constants.js";
+import { config } from "../config.js";
+import { searchParams, stacks } from "../constants.js";
 
 dotenv.config();
 

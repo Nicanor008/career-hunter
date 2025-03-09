@@ -3,9 +3,8 @@ import nodemailer from 'nodemailer';
 import puppeteer from 'puppeteer';
 import { defer, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
-import { config } from './config.js'; // Ensure your config.js exports your config
+import { config } from '../config.js';
 
-// ----- Your existing scraping functions -----
 const defaultStacks = ['reactjs', 'nodejs', 'typescript', 'javascript', 'vue', 'html', 'css', 'ai', 'nestjs', 'nextjs'];
 
 function urlQueryPage(searchParams) {
@@ -84,7 +83,7 @@ function goToLinkedinJobsPageAndExtractJobs(page, searchParams, stacksToUse) {
 
 async function scrapeJobs(searchParams, stacksInput) {
   const stacksToUse = stacksInput && stacksInput.length ? stacksInput : defaultStacks;
-  const MAX_PAGES = 10; // Adjust as needed.
+  const MAX_PAGES = 100;
   let allJobs = [];
   const browser = await puppeteer.launch({
     headless: true,

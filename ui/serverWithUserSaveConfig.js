@@ -3,9 +3,8 @@ import nodemailer from 'nodemailer';
 import puppeteer from 'puppeteer';
 import { defer, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
-import { config } from './config.js'; // Fallback config if needed
+import { config } from '../config.js'; // Fallback config if needed
 
-// ----- Your existing scraping functions -----
 const defaultStacks = ['reactjs', 'nodejs', 'typescript', 'javascript', 'vue', 'html', 'css', 'ai', 'nestjs', 'nextjs'];
 
 function urlQueryPage(searchParams) {
@@ -119,7 +118,6 @@ async function scrapeJobs(searchParams, stacksInput) {
 }
 
 async function sendJobsEmail(jobs, userConfig) {
-  // Override config values with those from userConfig if provided.
   const transporter = nodemailer.createTransport({
     host: userConfig.emailHost || config.email.host,
     port: Number(userConfig.emailPort) || config.email.port,
@@ -356,9 +354,7 @@ app.post('/search', async (req, res) => {
       global.lastScrapedJobs = jobs;
     }
     if (action === "sendEmail") {
-      // Retrieve user configuration from the query parameters (if sent) or leave it to fallback.
-      // For this example, assume user config is stored in localStorage on the client and sent as query parameters.
-      // In a real-world scenario, you might store this in a cookie or session.
+      // Retrieve user configuration from the query parameters
       const userConfig = req.body.userConfig ? JSON.parse(req.body.userConfig) : {};
       await sendJobsEmail(jobs, userConfig);
       res.send(`
@@ -452,7 +448,7 @@ app.post('/search', async (req, res) => {
   }
 });
 
-// Start the server on port 3000
+// Start the server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Job Scraper UI running on http://localhost:${port}`);

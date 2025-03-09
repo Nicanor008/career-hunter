@@ -3,7 +3,7 @@ import puppeteer from 'puppeteer'
 import dotenv from 'dotenv';
 import sendJobsEmail from './sendJobsEmail.js';
 import { goToLinkedinJobsPageAndExtractJobs } from './searchLinkedInJobs.js';
-import { searchParams, stacks } from './constants.js';
+import { searchParams, stacks } from '../constants.js';
 
 dotenv.config();
 
@@ -32,13 +32,7 @@ dotenv.config();
       });
   
   const page = await browser.newPage();
-  // Define search parameters
-  // const searchParams = {
-  //   searchText: stacks.toString(),
-  //   locationText: 'Nairobi,Kenya',
-  //   pageNumber: 0,
-  // };
-
+ 
   const MAX_PAGES = 100; // Increase max pages to scrape more jobs if available
   let allJobs = [];
   

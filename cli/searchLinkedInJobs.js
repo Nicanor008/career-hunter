@@ -1,7 +1,7 @@
 import { defer, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
 import dotenv from 'dotenv';
-import { stacks } from "./constants.js";
+import { stacks } from "../constants.js";
 
 dotenv.config();
 
