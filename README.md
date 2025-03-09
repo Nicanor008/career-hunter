@@ -10,6 +10,7 @@ LinkedIn Career Hunter is an automated job search and notification tool designed
 - [Usage](#usage)
   - [Running the Server](#running-the-server)
   - [Using the UI](#using-the-ui)
+- [Architect/System Flow](#architectsystem-flow)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Credits](#credits)
@@ -73,6 +74,9 @@ npm run start-server
 ```
 
 The application will run on http://localhost:3000.
+
+## Architect/System Flow
+![System Flow](./assets/images/system-flow.png)
 
 ## Using the UI
 ### Filtering Jobs:
