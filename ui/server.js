@@ -85,7 +85,7 @@ async function scrapeJobs(searchParams, stacksInput) {
   const stacksToUse = stacksInput && stacksInput.length ? stacksInput : defaultStacks;
   const MAX_PAGES = 100;
   let allJobs = [];
-  const browser = await puppeteer.launch({
+  const launchOptions = {
     headless: true,
     args: [
       '--disable-gpu',
@@ -93,7 +93,15 @@ async function scrapeJobs(searchParams, stacksInput) {
       '--disable-setuid-sandbox',
       '--no-sandbox'
     ],
-  });
+  }
+
+  // If running on Render, set the executablePath
+  if (process.env.RENDER) {
+    // Common path on Render for Chromium; adjust if necessary.
+    launchOptions.executablePath = "/opt/render/project/src/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome"
+  }
+  
+  const browser = await puppeteer.launch(launchOptions);
   const page = await browser.newPage();
   for (let currentPage = 0; currentPage < MAX_PAGES; currentPage++) {
     console.log(`Extracting jobs from page ${currentPage} ...`);
