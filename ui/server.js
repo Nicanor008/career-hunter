@@ -3,12 +3,17 @@ import nodemailer from 'nodemailer';
 import puppeteer from 'puppeteer';
 import { defer, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
-import { config } from '../config.js';
+import { config } from '../config.js'; // Ensure your config.js exports your config
 
+// ----- Your existing scraping functions -----
 const defaultStacks = ['reactjs', 'nodejs', 'typescript', 'javascript', 'vue', 'html', 'css', 'ai', 'nestjs', 'nextjs'];
 
 function urlQueryPage(searchParams) {
-  return `https://linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encodeURIComponent(searchParams.searchText)}&start=${searchParams.pageNumber * 25}${searchParams.locationText ? '&location=' + encodeURIComponent(searchParams.locationText) : ''}`;
+  return `https://linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encodeURIComponent(
+    searchParams.searchText
+  )}&start=${searchParams.pageNumber * 25}${
+    searchParams.locationText ? '&location=' + encodeURIComponent(searchParams.locationText) : ''
+  }`;
 }
 
 function navigateToJobsPage(page, searchParams) {
@@ -18,6 +23,8 @@ function navigateToJobsPage(page, searchParams) {
 let reqSearchText = '';
 let reqLocationText = '';
 let reqStacks = '';
+// Global storage for scraped jobs.
+global.lastScrapedJobs = [];
 
 function getJobsFromLinkedinPage(page, stacksToUse) {
   return defer(() =>
@@ -31,10 +38,9 @@ function getJobsFromLinkedinPage(page, stacksToUse) {
               const item = collection.item(i);
               const title = item.getElementsByClassName('base-search-card__title')[0].textContent.trim();
               const imgSrc = item.getElementsByTagName('img')[0]?.getAttribute('data-delayed-url') || '';
-              const url = (
+              const url =
                 item.getElementsByClassName('base-card__full-link')[0] ||
-                item.getElementsByClassName('base-search-card--link')[0]
-              ).href;
+                item.getElementsByClassName('base-search-card--link')[0];
               const companyNameAndLinkContainer = item.getElementsByClassName('base-search-card__subtitle')[0];
               const companyUrl = companyNameAndLinkContainer?.getElementsByTagName('a')[0]?.href;
               const companyName = companyNameAndLinkContainer.textContent.trim();
@@ -43,17 +49,16 @@ function getJobsFromLinkedinPage(page, stacksToUse) {
                 const [year, month, day] = dateString.split('-');
                 return new Date(parseFloat(year), parseFloat(month) - 1, parseFloat(day));
               };
-              const dateTime = (
+              const dateTime =
                 item.getElementsByClassName('job-search-card__listdate')[0] ||
-                item.getElementsByClassName('job-search-card__listdate--new')[0]
-              ).getAttribute('datetime');
-              const postedDate = toDate(dateTime).toISOString();
+                item.getElementsByClassName('job-search-card__listdate--new')[0];
+              const postedDate = toDate(dateTime.getAttribute('datetime')).toISOString();
               const descriptionElem = item.getElementsByClassName('job-search-card__snippet')[0];
               const description = descriptionElem ? descriptionElem.textContent.trim() : '';
-              const result = {
+              results.push({
                 id: item.children[0].getAttribute('data-entity-urn'),
                 city: companyLocation,
-                url: url,
+                url: url.href,
                 companyUrl: companyUrl || '',
                 img: imgSrc,
                 date: new Date().toISOString(),
@@ -61,9 +66,8 @@ function getJobsFromLinkedinPage(page, stacksToUse) {
                 title: title,
                 company: companyName,
                 location: companyLocation,
-                description: description
-              };
-              results.push(result);
+                description: description,
+              });
             } catch (e) {
               console.error(`Error retrieving linkedin page item: ${i} on url: ${window.location}`, e);
             }
@@ -77,8 +81,7 @@ function getJobsFromLinkedinPage(page, stacksToUse) {
 }
 
 function goToLinkedinJobsPageAndExtractJobs(page, searchParams, stacksToUse) {
-  return defer(() => from(navigateToJobsPage(page, searchParams)))
-    .pipe(switchMap(() => getJobsFromLinkedinPage(page, stacksToUse)));
+  return defer(() => from(navigateToJobsPage(page, searchParams))).pipe(switchMap(() => getJobsFromLinkedinPage(page, stacksToUse)));
 }
 
 async function scrapeJobs(searchParams, stacksInput) {
@@ -87,20 +90,15 @@ async function scrapeJobs(searchParams, stacksInput) {
   let allJobs = [];
   const launchOptions = {
     headless: true,
-    args: [
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      '--disable-setuid-sandbox',
-      '--no-sandbox'
-    ],
+    args: ['--disable-gpu', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--no-sandbox'],
+  };
+
+  if (process.env.RENDER) {
+    // Use Render's Chromium executable path (adjust if necessary)
+    launchOptions.executablePath =
+      "/opt/render/project/src/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome";
   }
 
-  // If running on Render, set the executablePath
-  if (process.env.RENDER) {
-    // Common path on Render for Chromium; adjust if necessary.
-    launchOptions.executablePath = "/opt/render/project/src/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome"
-  }
-  
   const browser = await puppeteer.launch(launchOptions);
   const page = await browser.newPage();
   for (let currentPage = 0; currentPage < MAX_PAGES; currentPage++) {
@@ -123,21 +121,23 @@ async function scrapeJobs(searchParams, stacksInput) {
   return allJobs;
 }
 
-async function sendJobsEmail(jobs) {
+async function sendJobsEmail(jobs, userConfig = {}) {
+  // Override config values with userConfig if provided.
   const transporter = nodemailer.createTransport({
-    host: config.email.host,
-    port: config.email.port,
-    secure: config.email.secure,
+    host: userConfig.emailHost || config.email.host,
+    port: Number(userConfig.emailPort) || config.email.port,
+    secure: userConfig.emailSecure === 'true' ? true : config.email.secure,
     auth: {
-      user: config.email.auth.user,
-      pass: config.email.auth.pass,
+      user: userConfig.emailUser || config.email.auth.user,
+      pass: userConfig.emailPass || config.email.auth.pass,
     },
   });
+
   const htmlBody = `
     <html>
       <head>
         <style>
-          body { font-family: Arial, sans-serif; background: #f2f2f2; padding: 20px; }
+          body { font-family: Arial, sans-serif; background: #f2f2f2; padding: 20px;  }
           .container { max-width: 40%; margin: auto; background: #f2f2f2; }
           .card { background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
           .card h2 { margin: 0 0 10px 0; font-size: 18px; }
@@ -151,21 +151,34 @@ async function sendJobsEmail(jobs) {
           .nav a, .nav button { padding: 10px 15px; background: #555; color: #fff; text-decoration: none; border-radius: 4px; margin: 5px; border: none; cursor: pointer; }
           .nav a:hover, .nav button:hover { background: #333; }
           hr { border: none; border-top: 1px solid #ddd; margin: 20px 0; }
+          @media only screen and (max-width: 600px) {
+            body { padding: 10px; }
+            .container { max-width: 90%; margin: auto; }
+            .button, .nav a, .nav button { padding: 8px 10px; font-size: 12px; }
+            .card { flex: 1 1 100%; margin: 5px 0; }
+          }
         </style>
       </head>
       <body>
+        <a href="/" style="text-decoration: none">
+          <h1 style="text-align: center; color: #0073b1; text-decoration: none">LinkedIn Career Hunter</h1>
+        </a>
         <div class="container">
-          <a href="/" style="text-decoration: none">
-            <h1 style="text-align: center; color: #0073b1; text-decoration: none">LinkedIn Career Hunter</h1>
-          </a>
-          <p style="text-align: left; padding: 14px; padding-left: 14px;">
+          <p style="text-align: left; padding: 14px;">
             Hi ${config.applicant.name},<br /><br />
             Here are the latest ${jobs.length} LinkedIn Job listings that match your preferences:
             <strong>${reqSearchText}</strong> at <strong>${reqLocationText}</strong>.<br />
             Click on a job title to view more details and apply.<br /><br />
             Best of luck on your job search!<br /><br />
             ${config.resumePath ? `<a href="${config.resumePath}" target="_blank" class="button" style="margin-right: 10px;">View My Resume</a>` : ''}
-            <a href="http://localhost:3000/?searchText=${encodeURIComponent(reqSearchText)}&locationText=${encodeURIComponent(reqLocationText)}&stacks=${encodeURIComponent(reqStacks)}" target="_blank" class="button">View on Website</a>
+            <a
+              href="http://localhost:3000/?searchText=${encodeURIComponent(reqSearchText)}&locationText=${encodeURIComponent(reqLocationText)}&stacks=${encodeURIComponent(reqStacks)}"
+              target="_blank"
+              class="button"
+              style="color: #ffffff; text-decoration: none"
+            >
+              View on Website
+            </a>
           </p>
           <div class="cards">
             ${jobs.map(job => {
@@ -185,23 +198,24 @@ async function sendJobsEmail(jobs) {
                       <p>Company: <a target="_blank" href="${job.companyUrl || '#'}" style="color: #0073b1; text-decoration: none;">${job.company}</a></p>
                     </div>
                   </div>
-                  <p><strong>ID:</strong> ${job.id}</p>
                   <p><strong>City:</strong> ${job.city}</p>
                   <p><strong>Location:</strong> ${job.location}</p>
                   <p><strong>Posted Date:</strong> ${postedDate}</p>
-                  <p><strong>Email Sent:</strong> ${emailSentDate}</p>
-                  <p><strong>Description:</strong> ${description}</p>
-                  <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none">View</a>
+                  <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none;">View</a>
                 </div>
               `;
             }).join('')}
           </div>
+          <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
+            <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
+            <p style="font-size: 12px; color: darkorange;">Hunt your Dream Job Easily</p>
+          </footer>
         </div>
       </body>
     </html>
   `;
   const mailOptions = {
-    from: config.email.from,
+    from: userConfig.emailFrom || config.email.from,
     to: config.applicant.email,
     subject: `New LinkedIn Jobs - ${jobs.length} Listings Found at ${reqLocationText}`,
     html: htmlBody,
@@ -219,114 +233,7 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Handle form submission and display results
-app.post('/search', async (req, res) => {
-    const searchText = req.body.searchText || 'software engineer';
-    const locationText = req.body.locationText || '';
-    const stacksInput = req.body.stacks || '';
-    const sendEmail = req.body.sendEmail === 'on';
-    const stacksArray = stacksInput ? stacksInput.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
-    
-    // Save filter values for later use (global variables)
-    reqSearchText = searchText;
-    reqLocationText = locationText;
-    reqStacks = stacksInput;
-    
-    const searchParams = { searchText, locationText, pageNumber: 0 };
-    try {
-      const jobs = await scrapeJobs(searchParams, stacksArray);
-      // Save jobs globally for reuse
-      global.lastScrapedJobs = jobs;
-      if (sendEmail) {
-        await sendJobsEmail(jobs);
-        res.send(`
-            <html>
-              <head>
-                <style>
-                  body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; }
-                  .container { max-width: 600px; margin: auto; text-align: center; }
-                  .button { padding: 10px 15px; background: #0073b1; color: #fff; border: none; border-radius: 4px; text-decoration: none; }
-                </style>
-              </head>
-              <body>
-                <div class="container">
-                  <h1>Email sent with ${jobs.length} job listings.</h1>
-                  <p><a class="button" href="/">Back to Filters</a></p>
-                </div>
-              </body>
-            </html>
-          `);          
-      } else {
-        let html = `
-          <html>
-            <head>
-              <title>Job Results - LinkedIn Career Hunter</title>
-              <style>
-                body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; }
-                .container { max-width: 90%; margin: auto; }
-                .header { text-align: center; color: #0073b1; }
-                .nav { text-align: center; margin-bottom: 20px; }
-                .nav a, .nav button { padding: 10px 15px; background: #555; color: #fff; text-decoration: none; border-radius: 4px; margin: 5px; border: none; cursor: pointer; }
-                .nav a:hover, .nav button:hover { background: #333; }
-                .cards { display: flex; flex-wrap: wrap; justify-content: space-around; }
-                .card { background: #fff; border-radius: 8px; padding: 15px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-                .card h2 { margin: 0 0 10px 0; font-size: 18px; }
-                .card p { margin: 5px 0; font-size: 14px; }
-                .card a { color: #0073b1; text-decoration: none; }
-                .button { display: inline-block; padding: 8px 12px; margin-top: 10px; background: #0073b1; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bolder; }
-              </style>
-            </head>
-            <body>
-              <div class="container">
-                <a href="/" style="text-decoration: none">
-                    <h1 class="header" style="text-decoration: none;">LinkedIn Career Hunter</h1>
-                </a>
-                <p style="text-align: center;">Found <strong>${jobs.length}</strong> job listings matching your filters: <strong>${searchText}</strong> at <strong>${locationText}</strong></p>
-                <br />
-                <div class="nav">
-                  <a href="/">Back to Filters</a>
-                  ${jobs.length > 0 ? `
-                    <form action="/send-email" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
-                        <input type="hidden" name="searchText" value="${encodeURIComponent(searchText)}" />
-                        <input type="hidden" name="locationText" value="${encodeURIComponent(locationText)}" />
-                        <input type="hidden" name="stacks" value="${stacksInput}" />
-                        <button type="submit" id="emailButton">Send Email Notification</button>
-                    </form>
-                  ` : ''}
-                </div>
-                <div class="cards">
-        `;
-        jobs.length > 0 ? jobs.forEach(job => {
-          html += `
-            <div class="card">
-              <h2><a target="_blank" href="${job.url}">${job.title}</a></h2>
-              <p>Company: <a target="_blank" href="${job.companyUrl || '#'}">${job.company}</a></p>
-              <p>Location: ${job.location}, ${job.city}</p>
-              <p>Posted: ${new Date(job.postedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
-              <p>${job.description ? (job.description.length > 150 ? job.description.substring(0, 150) + '...' : job.description) : ''}</p>
-              <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none">View</a>
-            </div>
-          `
-        }) : html += `<p>No jobs found matching your filters.</p>`;
-        html += `
-                </div>
-              <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
-                <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
-                <p style="font-size: 12px; color: darkorange"">Hunt your Dream Job Easily</p>
-              </footer>
-              </div>
-            </body>
-          </html>
-        `;
-        res.send(html);
-      }
-    } catch (err) {
-      console.error("Error during job scraping:", err);
-      res.status(500).send("An error occurred while scraping jobs.");
-    }
-});  
-
-// Landing page: if query parameters exist, auto-search; otherwise, show filter form.
+// GET "/" Route - Checks for query parameters to auto-search; otherwise, shows config/filters form.
 app.get('/', async (req, res) => {
   const { searchText, locationText, stacks } = req.query;
   if (searchText || locationText || stacks) {
@@ -347,35 +254,42 @@ app.get('/', async (req, res) => {
           <head>
             <title>Job Results - LinkedIn Career Hunter</title>
             <style>
-              body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; }
+              body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
               .container { max-width: 90%; margin: auto; }
               .header { text-align: center; color: #0073b1; }
               .nav { text-align: center; margin-bottom: 20px; }
               .nav a, .nav button { padding: 10px 15px; background: #555; color: #fff; text-decoration: none; border-radius: 4px; margin: 5px; border: none; cursor: pointer; }
               .nav a:hover, .nav button:hover { background: #333; }
-              .cards { display: flex; flex-wrap: wrap; justify-content: space-around; }
+              .cards { display: flex; flex-wrap: wrap; justify-content: center; }
               .card { background: #fff; border-radius: 8px; padding: 15px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
               .card h2 { margin: 0 0 10px 0; font-size: 18px; }
               .card p { margin: 5px 0; font-size: 14px; }
               .card a { color: #0073b1; text-decoration: none; }
               .button { display: inline-block; padding: 8px 12px; margin-top: 10px; background: #0073b1; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bolder; }
+              @media only screen and (max-width: 600px) {
+                body { padding: 10px; }
+                .container { padding: 10px; }
+                .nav a, .nav button, .button { padding: 8px 10px; font-size: 12px; }
+                .card { flex: 1 1 100%; margin: 5px 0; }
+              }
             </style>
           </head>
           <body>
+            <a href="/" style="text-decoration: none">
+              <h1 class="header" style="text-decoration: none;">LinkedIn Career Hunter</h1>
+            </a>
             <div class="container">
+              <p style="text-align: center;">Found ${jobs.length} job listings matching your filters: <strong>${sText}</strong> at <strong>${lText}</strong></p>
               <div class="nav">
-                <a href="/">Back to Filters</a>
-                <form action="/send-email" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
+                <a href="/" style="background: darkorange">Back to Filters</a>
+                <form action="/search" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
                   <input type="hidden" name="searchText" value="${encodeURIComponent(sText)}" />
                   <input type="hidden" name="locationText" value="${encodeURIComponent(lText)}" />
                   <input type="hidden" name="stacks" value="${stacksInput}" />
-                  <button type="submit" id="emailButton">Send Email Notification</button>
+                  <input type="hidden" name="action" value="sendEmail" />
+                  <button type="submit" id="emailButton" style="background: #0073b1">Send Email</button>
                 </form>
               </div>
-              <a href="/" style="text-decoration: none">
-                <h1 class="header" style="text-decoration: none">LinkedIn Career Hunter</h1>
-              </a>
-              <p style="text-align: center;">Found ${jobs.length} job listings matching your filters: <strong>${sText}</strong> at <strong>${lText}</strong></p>
               <div class="cards">
       `;
       jobs.forEach(job => {
@@ -386,16 +300,22 @@ app.get('/', async (req, res) => {
             <p>Location: ${job.location}, ${job.city}</p>
             <p>Posted: ${new Date(job.postedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
             <p>${job.description ? (job.description.length > 150 ? job.description.substring(0, 150) + '...' : job.description) : ''}</p>
-            <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none">View</a>
+            <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none;">View</a>
           </div>
         `;
       });
       html += `
               </div>
-              <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
-                <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
-                <p style="font-size: 12px; color: darkorange">Hunt your Dream Job Easily</p>
-              </footer>
+              <div class="nav">
+                <a href="/" style="background: darkorange">Back to Filters</a>
+                <form action="/search" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
+                  <input type="hidden" name="searchText" value="${encodeURIComponent(sText)}" />
+                  <input type="hidden" name="locationText" value="${encodeURIComponent(lText)}" />
+                  <input type="hidden" name="stacks" value="${stacksInput}" />
+                  <input type="hidden" name="action" value="sendEmail" />
+                  <button type="submit" id="emailButton"  style="background: #0073b1">Send Email</button>
+                </form>
+              </div>
             </div>
           </body>
         </html>
@@ -412,13 +332,17 @@ app.get('/', async (req, res) => {
         <head>
           <title>LinkedIn Career Hunter</title>
           <style>
-            body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; }
-            .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
+            .container { width: 90vw; max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
             h1 { text-align: center; color: #0073b1; }
             label { font-weight: bold; }
             input[type="text"] { width: 100%; padding: 8px; margin: 5px 0 15px; border: 1px solid #ccc; border-radius: 4px; }
             button { padding: 10px 15px; background: #0073b1; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
             button:hover { background: #005a87; }
+            @media only screen and (max-width: 600px) {
+              .container { padding: 10px; }
+              button { padding: 8px 10px; font-size: 12px; }
+            }
           </style>
           <script>
             function onSearchSubmit() {
@@ -428,10 +352,27 @@ app.get('/', async (req, res) => {
           </script>
         </head>
         <body>
+        <a
+          href="https://github.com/nicanor008/career-hunter.git"
+          target="_blank"
+          style="
+            position: fixed;
+            top: 55px;
+            right: -44px;
+            transform: rotate(45deg);
+            background: black;
+            color: #ffffff;
+            padding: 7px 55px;
+            font-size: 14px;
+            text-decoration: none;
+            z-index: 1000;
+          ">
+            Fork me on GitHub
+          </a>
+          <a href="/" style="text-decoration: none">
+            <h1 class="header">LinkedIn Career Hunter</h1>
+          </a>
           <div class="container">
-            <a href="/" style="text-decoration: none">
-                <h1 class="header">LinkedIn Career Hunter</h1>
-            </a>
             <p>Use the filters below to search for your ideal job listings on LinkedIn. You can choose to receive an email notification with the results.</p>
             <form action="/search" method="post" onsubmit="onSearchSubmit();">
               <label for="searchText">Search Text:</label><br />
@@ -453,19 +394,18 @@ app.get('/', async (req, res) => {
           </div>
           <div style="width: 60%; margin: auto">
             <div class="info-cards" style="display: flex; flex-wrap: wrap; justify-content: center; margin-top: 20px;">
-                <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h2 style="color: #0073b1;">How It Works</h2>
-                    <p>This tool automatically looks job listings from LinkedIn using an advanced scraper API. It applies your filters (job title, location, and other filters of your choice) and displays the most relevant jobs either on the website or sends you an email with the results</p>
-                </div>
-                <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h2 style="color: #0073b1;">Why Use It</h2>
-                    <p>Save time and never miss a great opportunity. Our solution is designed to help job seekers land their dream job on LinkedIn by delivering the latest job listings directly to your inbox or displaying them on our user-friendly platform.</p>
-                </div>
+              <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h2 style="color: #0073b1;">How It Works</h2>
+                <p>This tool automatically scrapes job listings from LinkedIn using an advanced scraper API. It applies your filters (job title, location, and other filters of your choice) and displays the most relevant jobs either on the website or sends you an email with the results.</p>
+              </div>
+              <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h2 style="color: #0073b1;">Why Use It</h2>
+                <p>Save time and never miss a great opportunity. Our solution is designed to help job seekers land their dream job on LinkedIn by delivering the latest job listings directly to your inbox or displaying them on our user-friendly platform.</p>
+              </div>
             </div>
-
             <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
-                <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
-                <p style="font-size: 12px; color: darkorange"">Hunt your Dream Job Easily</p>
+              <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
+              <p style="font-size: 12px; color: darkorange;">Hunt your Dream Job Easily</p>
             </footer>
           </div>
         </body>
@@ -474,52 +414,175 @@ app.get('/', async (req, res) => {
   }
 });
 
-// Endpoint to send email after results are shown using previously scraped jobs
+// Unified POST route for search and send email actions.
+app.post('/search', async (req, res) => {
+  const searchText = req.body.searchText || 'software engineer';
+  const locationText = req.body.locationText || '';
+  const stacksInput = req.body.stacks || '';
+  const action = req.body.action || ''; // "sendEmail" if the send-email button was clicked
+  const stacksArray = stacksInput ? stacksInput.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
+  
+  // Save filter values globally.
+  reqSearchText = searchText;
+  reqLocationText = locationText;
+  reqStacks = stacksInput;
+  
+  const searchParams = { searchText, locationText, pageNumber: 0 };
+  
+  try {
+    let jobs;
+    if (global.lastScrapedJobs && global.lastScrapedJobs.length > 0 && action === "sendEmail") {
+      jobs = global.lastScrapedJobs;
+    } else {
+      jobs = await scrapeJobs(searchParams, stacksArray);
+      global.lastScrapedJobs = jobs;
+    }
+    if (action === "sendEmail") {
+      // In a production system, you might pass userConfig from cookies or session.
+      const userConfig = req.body.userConfig ? JSON.parse(req.body.userConfig) : {};
+      await sendJobsEmail(jobs, userConfig);
+      res.send(`
+        <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
+              .container { width: 90vw; max-width: 900px; margin: auto; text-align: center; }
+              .button { padding: 10px 15px; background: #0073b1; color: #fff; border: none; border-radius: 4px; text-decoration: none; }
+              @media only screen and (max-width: 600px) {
+                .container { padding: 10px; }
+                .button { padding: 8px 10px; font-size: 12px; }
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>Email sent with ${jobs.length} job listings.</h1>
+              <p><a class="button" href="/" style="background: darkorange">Back to Filters</a></p>
+            </div>
+          </body>
+        </html>
+      `);
+    } else {
+      let html = `
+        <html>
+          <head>
+            <title>Job Results - LinkedIn Career Hunter</title>
+            <style>
+              body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
+              .container { max-width: 90%; margin: auto; }
+              .header { text-align: center; color: #0073b1; }
+              .nav { text-align: center; margin-bottom: 20px; }
+              .nav a, .nav button { padding: 10px 15px; background: #555; color: #fff; text-decoration: none; border-radius: 4px; margin: 5px; border: none; cursor: pointer; }
+              .nav a:hover, .nav button:hover { background: #333; }
+              .cards { display: flex; flex-wrap: wrap; justify-content: center; }
+              .card { background: #fff; border-radius: 8px; padding: 15px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+              .card h2 { margin: 0 0 10px 0; font-size: 18px; }
+              .card p { margin: 5px 0; font-size: 14px; }
+              .card a { color: #0073b1; text-decoration: none; }
+              .button { display: inline-block; padding: 8px 12px; margin-top: 10px; background: #0073b1; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bolder; }
+              @media only screen and (max-width: 600px) {
+                .container { padding: 10px; }
+                .nav a, .nav button, .button { padding: 8px 10px; font-size: 12px; }
+                .card { flex: 1 1 100%; margin: 5px 0; }
+              }
+            </style>
+          </head>
+          <body>
+            <a href="/" style="text-decoration: none">
+              <h1 class="header" style="text-decoration: none;">LinkedIn Career Hunter</h1>
+            </a>
+            <div class="container">
+              <p style="text-align: center;">Found <strong>${jobs.length}</strong> job listings matching your filters: <strong>${searchText}</strong> at <strong>${locationText}</strong></p>
+              <br />
+              <div class="nav">
+                <a href="/" style="background: darkorange">Back to Filters</a>
+                ${jobs.length > 0 ? `<form action="/search" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
+                  <input type="hidden" name="searchText" value="${encodeURIComponent(searchText)}" />
+                  <input type="hidden" name="locationText" value="${encodeURIComponent(locationText)}" />
+                  <input type="hidden" name="stacks" value="${stacksInput}" />
+                  <input type="hidden" name="action" value="sendEmail" />
+                  <button type="submit" id="emailButton" style="background: #0073b1">Send Email</button>
+                </form>` : ''}
+              </div>
+              <div class="cards">
+      `;
+      jobs.forEach(job => {
+        html += `
+          <div class="card">
+            <h2><a target="_blank" href="${job.url}">${job.title}</a></h2>
+            <p>Company: <a target="_blank" href="${job.companyUrl || '#'}">${job.company}</a></p>
+            <p>Location: ${job.location}, ${job.city}</p>
+            <p>Posted: ${new Date(job.postedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+            <p>${job.description ? (job.description.length > 150 ? job.description.substring(0, 150) + '...' : job.description) : ''}</p>
+            <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none;">View</a>
+          </div>
+        `;
+      });
+      html += `
+              </div>
+              <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
+                <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
+                <p style="font-size: 12px; color: darkorange;">Hunt your Dream Job Easily</p>
+              </footer>
+            </div>
+          </body>
+        </html>
+      `;
+      res.send(html);
+    }
+  } catch (err) {
+    console.error("Error during job scraping:", err);
+    res.status(500).send("An error occurred while scraping jobs.");
+  }
+});
+
+// Endpoint to send email using previously scraped jobs
 app.post('/send-email', async (req, res) => {
   if (!global.lastScrapedJobs || global.lastScrapedJobs.length === 0) {
-    res.send(`<p>No job listings available from the last search.</p><p><a href="/">Back to Filters</a></p>`);
+    res.send(`<p>No job listings available from the last search.</p><p><a href="/" style="background: darkorange">Back to Filters</a></p>`);
     return;
   }
   try {
-    await sendJobsEmail(global.lastScrapedJobs);
+    global.lastScrapedJobs.length > 0 && await sendJobsEmail(global.lastScrapedJobs);
     res.send(`
-        <html>
+      <html>
         <head>
-          <title>LinkedIn Career Hunter</title>
           <style>
-            body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; }
-            .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            h1 { text-align: center; color: #0073b1; }
+            body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
+            .container { width: 90vw; max-width: 900px; margin: auto; }
+            .button { padding: 10px 15px; background: #0073b1; color: #fff; border: none; border-radius: 4px; text-decoration: none; }
+            @media only screen and (max-width: 600px) {
+              .container { padding: 10px; }
+              .button { padding: 8px 10px; font-size: 12px; }
+            }
           </style>
         </head>
         <body>
+          <a href="/" style="text-decoration: none">
+            <h1 class="header">LinkedIn Career Hunter</h1>
+          </a>
           <div class="container">
-            <a href="/" style="text-decoration: none">
-                <h1 class="header">LinkedIn Career Hunter</h1>
-            </a>
-            <h4>Email sent with ${global.lastScrapedJobs.length} job listings</h4>
-            <p style="text-align: center">
-                <a href="/">Back to Filters</a>
-            </p>
-            <br />
-            <br />
-            <div style="width: 60%; margin: auto">
-                <div class="info-cards" style="display: flex; flex-wrap: wrap; justify-content: center; margin-top: 20px;">
-                    <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                        <h2 style="color: #0073b1;">How It Works</h2>
-                        <p>This tool automatically looks job listings from LinkedIn using an advanced scraper API. It applies your filters (job title, location, and other filters of your choice) and displays the most relevant jobs either on the website or sends you an email with the results</p>
-                    </div>
-                    <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                        <h2 style="color: #0073b1;">Why Use It</h2>
-                        <p>Save time and never miss a great opportunity. Our solution is designed to help job seekers land their dream job on LinkedIn by delivering the latest job listings directly to your inbox or displaying them on our user-friendly platform.</p>
-                    </div>
-                </div>
+            <h1>${global.lastScrapedJobs.length > 0 ? `Email sent with ${global.lastScrapedJobs.length} job listings` : `Email not Send <br /> No Jobs exist with the given filters, re-apply filters`}</h1>
+            <p><a class="button" href="/" style="background: darkorange">Back to Filters</a></p>
+          </div>
+          <br />
+          <br />
+          <div style="width: 60%; margin: auto">
+              <div class="info-cards" style="display: flex; flex-wrap: wrap; justify-content: center; margin-top: 20px;">
+                  <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                      <h2 style="color: #0073b1;">How It Works</h2>
+                      <p>This tool automatically looks job listings from LinkedIn using an advanced scraper API. It applies your filters (job title, location, and other filters of your choice) and displays the most relevant jobs either on the website or sends you an email with the results</p>
+                  </div>
+                  <div class="card" style="background: #fff; border-radius: 8px; padding: 20px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                      <h2 style="color: #0073b1;">Why Use It</h2>
+                      <p>Save time and never miss a great opportunity. Our solution is designed to help job seekers land their dream job on LinkedIn by delivering the latest job listings directly to your inbox or displaying them on our user-friendly platform.</p>
+                  </div>
+              </div>
 
-                <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
-                    <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
-                    <p style="font-size: 12px; color: darkorange"">Hunt your Dream Job Easily</p>
-                </footer>
-            </div>
+              <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
+                  <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
+                  <p style="font-size: 12px; color: darkorange"">Hunt your Dream Job Easily</p>
+              </footer>
           </div>
         </body>
       </html>
