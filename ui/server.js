@@ -102,7 +102,7 @@ async function scrapeJobs(searchParams, stacksInput) {
   const browser = await puppeteer.launch(launchOptions);
   const page = await browser.newPage();
   for (let currentPage = 0; currentPage < MAX_PAGES; currentPage++) {
-    console.log(`Extracting jobs from page ${currentPage} ...`);
+    console.log(`Extracting jobs from page ${currentPage + 1} ...`);
     searchParams.pageNumber = currentPage;
     try {
       const jobs = await goToLinkedinJobsPageAndExtractJobs(page, searchParams, stacksToUse).toPromise();
@@ -167,12 +167,12 @@ async function sendJobsEmail(jobs, userConfig = {}) {
           <p style="text-align: left; padding: 14px;">
             Hi ${config.applicant.name},<br /><br />
             Here are the latest ${jobs.length} LinkedIn Job listings that match your preferences:
-            <strong>${reqSearchText}</strong> at <strong>${reqLocationText}</strong>.<br />
+            <strong>${encodeURIComponent(reqSearchText)}</strong> at <strong>${encodeURIComponent(reqLocationText)}</strong>.<br />
             Click on a job title to view more details and apply.<br /><br />
             Best of luck on your job search!<br /><br />
             ${config.resumePath ? `<a href="${config.resumePath}" target="_blank" class="button" style="margin-right: 10px;">View My Resume</a>` : ''}
             <a
-              href="http://localhost:3000/?searchText=${encodeURIComponent(reqSearchText)}&locationText=${encodeURIComponent(reqLocationText)}&stacks=${encodeURIComponent(reqStacks)}"
+              href="https://career-hunter.onrender.com/?searchText=${encodeURIComponent(reqSearchText)}&locationText=${encodeURIComponent(reqLocationText)}&stacks=${encodeURIComponent(reqStacks)}"
               target="_blank"
               class="button"
               style="color: #ffffff; text-decoration: none"
@@ -182,13 +182,9 @@ async function sendJobsEmail(jobs, userConfig = {}) {
           </p>
           <div class="cards">
             ${jobs.map(job => {
-              const emailSentDate = new Date(job.date).toLocaleDateString('en-US', { 
-                year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' 
-              });
               const postedDate = new Date(job.postedDate).toLocaleDateString('en-US', { 
                 year: 'numeric', month: 'long', day: 'numeric' 
               });
-              const description = job.description ? (job.description.length > 150 ? job.description.substring(0, 150) + '...' : job.description) : 'N/A';
               return `
                 <div class="card">
                   <div class="header">
@@ -279,7 +275,7 @@ app.get('/', async (req, res) => {
               <h1 class="header" style="text-decoration: none;">LinkedIn Career Hunter</h1>
             </a>
             <div class="container">
-              <p style="text-align: center;">Found ${jobs.length} job listings matching your filters: <strong>${sText}</strong> at <strong>${lText}</strong></p>
+              <p style="text-align: center;">Found ${jobs.length} job listings matching your filters: <strong>${encodeURIComponent(sText)}</strong> at <strong>${encodeURIComponent(lText)}</strong></p>
               <div class="nav">
                 <a href="/" style="background: darkorange">Back to Filters</a>
                 <form action="/search" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
@@ -419,7 +415,7 @@ app.post('/search', async (req, res) => {
   const searchText = req.body.searchText || 'software engineer';
   const locationText = req.body.locationText || '';
   const stacksInput = req.body.stacks || '';
-  const action = req.body.action || ''; // "sendEmail" if the send-email button was clicked
+  const action = req.body.sendEmail || ''; // "sendEmail" if the send-email button was clicked
   const stacksArray = stacksInput ? stacksInput.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
   
   // Save filter values globally.
@@ -431,105 +427,82 @@ app.post('/search', async (req, res) => {
   
   try {
     let jobs;
-    if (global.lastScrapedJobs && global.lastScrapedJobs.length > 0 && action === "sendEmail") {
+    if (global.lastScrapedJobs && global.lastScrapedJobs.length > 0 && action === "on") {
       jobs = global.lastScrapedJobs;
     } else {
       jobs = await scrapeJobs(searchParams, stacksArray);
       global.lastScrapedJobs = jobs;
     }
-    if (action === "sendEmail") {
-      // In a production system, you might pass userConfig from cookies or session.
-      const userConfig = req.body.userConfig ? JSON.parse(req.body.userConfig) : {};
-      await sendJobsEmail(jobs, userConfig);
-      res.send(`
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
-              .container { width: 90vw; max-width: 900px; margin: auto; text-align: center; }
-              .button { padding: 10px 15px; background: #0073b1; color: #fff; border: none; border-radius: 4px; text-decoration: none; }
-              @media only screen and (max-width: 600px) {
-                .container { padding: 10px; }
-                .button { padding: 8px 10px; font-size: 12px; }
-              }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <h1>Email sent with ${jobs.length} job listings.</h1>
-              <p><a class="button" href="/" style="background: darkorange">Back to Filters</a></p>
+
+    const userConfig = req.body.userConfig ? JSON.parse(req.body.userConfig) : {};
+    action && jobs.length > 0 ? await sendJobsEmail(jobs, userConfig) : null;
+    let html = `
+      <html>
+        <head>
+          <title>Job Results - LinkedIn Career Hunter</title>
+          <style>
+            body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
+            .container { max-width: 90%; margin: auto; }
+            .header { text-align: center; color: #0073b1; }
+            .nav { text-align: center; margin-bottom: 20px; }
+            .nav a, .nav button { padding: 10px 15px; background: #555; color: #fff; text-decoration: none; border-radius: 4px; margin: 5px; border: none; cursor: pointer; }
+            .nav a:hover, .nav button:hover { background: #333; }
+            .cards { display: flex; flex-wrap: wrap; justify-content: center; }
+            .card { background: #fff; border-radius: 8px; padding: 15px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .card h2 { margin: 0 0 10px 0; font-size: 18px; }
+            .card p { margin: 5px 0; font-size: 14px; }
+            .card a { color: #0073b1; text-decoration: none; }
+            .button { display: inline-block; padding: 8px 12px; margin-top: 10px; background: #0073b1; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bolder; }
+            @media only screen and (max-width: 600px) {
+              .container { padding: 10px; }
+              .nav a, .nav button, .button { padding: 8px 10px; font-size: 12px; }
+              .card { flex: 1 1 100%; margin: 5px 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <a href="/" style="text-decoration: none">
+            <h1 class="header" style="text-decoration: none;">LinkedIn Career Hunter</h1>
+          </a>
+          <div class="container">
+            <p style="text-align: center;">Found <strong>${jobs.length}</strong> job listings matching your filters: <strong>${searchText}</strong> at <strong>${locationText}</strong></p>
+            <br />
+            <div class="nav">
+              <a href="/" style="background: darkorange">Back to Filters</a>
+              ${(jobs.length > 0 && !action) ? `<form action="/search" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
+                <input type="hidden" name="searchText" value="${encodeURIComponent(searchText)}" />
+                <input type="hidden" name="locationText" value="${encodeURIComponent(locationText)}" />
+                <input type="hidden" name="stacks" value="${stacksInput}" />
+                <input type="hidden" name="action" value="sendEmail" />
+                <button type="submit" id="emailButton" style="background: #0073b1">Send Email</button>
+              </form>` : ''}
             </div>
-          </body>
-        </html>
-      `);
-    } else {
-      let html = `
-        <html>
-          <head>
-            <title>Job Results - LinkedIn Career Hunter</title>
-            <style>
-              body { font-family: Arial, sans-serif; background: #eef2f7; padding: 20px; align-content: center; }
-              .container { max-width: 90%; margin: auto; }
-              .header { text-align: center; color: #0073b1; }
-              .nav { text-align: center; margin-bottom: 20px; }
-              .nav a, .nav button { padding: 10px 15px; background: #555; color: #fff; text-decoration: none; border-radius: 4px; margin: 5px; border: none; cursor: pointer; }
-              .nav a:hover, .nav button:hover { background: #333; }
-              .cards { display: flex; flex-wrap: wrap; justify-content: center; }
-              .card { background: #fff; border-radius: 8px; padding: 15px; margin: 10px; flex: 1 1 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-              .card h2 { margin: 0 0 10px 0; font-size: 18px; }
-              .card p { margin: 5px 0; font-size: 14px; }
-              .card a { color: #0073b1; text-decoration: none; }
-              .button { display: inline-block; padding: 8px 12px; margin-top: 10px; background: #0073b1; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bolder; }
-              @media only screen and (max-width: 600px) {
-                .container { padding: 10px; }
-                .nav a, .nav button, .button { padding: 8px 10px; font-size: 12px; }
-                .card { flex: 1 1 100%; margin: 5px 0; }
-              }
-            </style>
-          </head>
-          <body>
-            <a href="/" style="text-decoration: none">
-              <h1 class="header" style="text-decoration: none;">LinkedIn Career Hunter</h1>
-            </a>
-            <div class="container">
-              <p style="text-align: center;">Found <strong>${jobs.length}</strong> job listings matching your filters: <strong>${searchText}</strong> at <strong>${locationText}</strong></p>
-              <br />
-              <div class="nav">
-                <a href="/" style="background: darkorange">Back to Filters</a>
-                ${jobs.length > 0 ? `<form action="/search" method="post" style="display:inline;" onsubmit="document.getElementById('emailButton').disabled=true; document.getElementById('emailButton').innerText='Loading...';">
-                  <input type="hidden" name="searchText" value="${encodeURIComponent(searchText)}" />
-                  <input type="hidden" name="locationText" value="${encodeURIComponent(locationText)}" />
-                  <input type="hidden" name="stacks" value="${stacksInput}" />
-                  <input type="hidden" name="action" value="sendEmail" />
-                  <button type="submit" id="emailButton" style="background: #0073b1">Send Email</button>
-                </form>` : ''}
-              </div>
-              <div class="cards">
-      `;
-      jobs.forEach(job => {
-        html += `
-          <div class="card">
-            <h2><a target="_blank" href="${job.url}">${job.title}</a></h2>
-            <p>Company: <a target="_blank" href="${job.companyUrl || '#'}">${job.company}</a></p>
-            <p>Location: ${job.location}, ${job.city}</p>
-            <p>Posted: ${new Date(job.postedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
-            <p>${job.description ? (job.description.length > 150 ? job.description.substring(0, 150) + '...' : job.description) : ''}</p>
-            <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none;">View</a>
-          </div>
-        `;
-      });
+            ${action && jobs.length > 0 ? `<p style="text-align: center">Email sent with <strong>${jobs.length}</strong> job listings.</p>` : ''}
+            <div class="cards">
+    `;
+    jobs.forEach(job => {
       html += `
-              </div>
-              <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
-                <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
-                <p style="font-size: 12px; color: darkorange;">Hunt your Dream Job Easily</p>
-              </footer>
-            </div>
-          </body>
-        </html>
+        <div class="card">
+          <h2><a target="_blank" href="${job.url}">${job.title}</a></h2>
+          <p>Company: <a target="_blank" href="${job.companyUrl || '#'}">${job.company}</a></p>
+          <p>Location: ${job.location}, ${job.city}</p>
+          <p>Posted: ${new Date(job.postedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <p>${job.description ? (job.description.length > 150 ? job.description.substring(0, 150) + '...' : job.description) : ''}</p>
+          <a class="button" target="_blank" href="${job.url}" style="color: #ffffff; text-decoration: none;">View</a>
+        </div>
       `;
-      res.send(html);
-    }
+    });
+    html += `
+            </div>
+            <footer style="text-align: center; margin-top: 40px; padding: 20px; background: #eee; border-radius: 8px;">
+              <p style="font-size: 13px;">Designed and Developed by <a href="https://nicanor.me" target="_blank" style="color: #0073b1;">Nicanor Korir</a></p>
+              <p style="font-size: 12px; color: darkorange;">Hunt your Dream Job Easily</p>
+            </footer>
+          </div>
+        </body>
+      </html>
+    `;
+    res.send(html);
   } catch (err) {
     console.error("Error during job scraping:", err);
     res.status(500).send("An error occurred while scraping jobs.");
@@ -596,5 +569,5 @@ app.post('/send-email', async (req, res) => {
 // Start the server on port 3000
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Job Scraper UI running on http://localhost:${port}`);
+  console.log(`Job Scraper UI running on https://career-hunter.nicanor.me`);
 });
